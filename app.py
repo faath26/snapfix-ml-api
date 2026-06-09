@@ -39,9 +39,11 @@ def extract_hog_features(image_path):
 @app.route("/")
 def home():
     return jsonify({
-        "status": "running",
-        "classes": list(model.classes_)
-    })
+    "prediction": str(prediction),
+    "confidence": round(confidence, 2),
+    "all_classes": list(model.classes_),
+    "probabilities": probabilities.tolist()
+})
 
 
 @app.route("/predict", methods=["POST"])
