@@ -39,11 +39,9 @@ def extract_hog_features(image_path):
 @app.route("/")
 def home():
     return jsonify({
-    "prediction": str(prediction),
-    "confidence": round(confidence, 2),
-    "all_classes": list(model.classes_),
-    "probabilities": probabilities.tolist()
-})
+        "status": "running",
+        "classes": list(model.classes_)
+    })
 
 
 @app.route("/predict", methods=["POST"])
@@ -90,7 +88,9 @@ def predict():
 
         return jsonify({
             "prediction": str(prediction),
-            "confidence": round(confidence, 2)
+            "confidence": round(confidence, 2),
+            "all_classes": list(model.classes_),
+            "probabilities": probabilities.tolist()
         })
 
     except Exception as e:
