@@ -5,6 +5,7 @@ import numpy as np
 from skimage.feature import hog
 import tempfile
 import os
+import base64
 
 app = Flask(__name__)
 
@@ -46,17 +47,30 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
 
-    if "image" not in request.files:
-        return jsonify({
-            "error": "No image uploaded"
-        }), 400
-
-    image = request.files["image"]
-
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-    image.save(temp_file.name)
-
     try:
+
+        data = request.get_json()
+
+        if not data or "image" not in data:
+            return jsonify({
+                "error": "No image provided"
+            }), 400
+
+        image_data = data["image"]
+
+        if "," in image_data:
+            image_data = image_data.split(",")[1]
+
+        image_bytes = base64.b64decode(image_data)
+
+        temp_file = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".jpg"
+        )
+
+        temp_file.write(image_bytes)
+        temp_file.close()
+
         features = extract_hog_features(temp_file.name)
 
         if features is None:
@@ -78,13 +92,16 @@ def predict():
         })
 
     except Exception as e:
+
         return jsonify({
             "error": str(e)
         }), 500
 
     finally:
-        if os.path.exists(temp_file.name):
-            os.remove(temp_file.name)
+
+        if 'temp_file' in locals():
+            if os.path.exists(temp_file.name):
+                os.remove(temp_file.name)
 
 
 if __name__ == "__main__":
