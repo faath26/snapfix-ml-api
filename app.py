@@ -12,10 +12,11 @@ app = Flask(__name__)
 # Load model
 model = joblib.load("snapfix_rf_hog_model.pkl")
 
-IMG_SIZE = 128
+IMG_SIZE = 192
 
 
-def extract_hog_features(image_path):
+def extract_features(image_path):
+
     img = cv2.imread(image_path)
 
     if img is None:
@@ -23,17 +24,38 @@ def extract_hog_features(image_path):
 
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
 
+    # HSV COLOR FEATURES
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+    hist_h = cv2.calcHist([hsv], [0], None, [64], [0, 180])
+    hist_s = cv2.calcHist([hsv], [1], None, [64], [0, 256])
+    hist_v = cv2.calcHist([hsv], [2], None, [64], [0, 256])
+
+    color_features = np.concatenate([
+        hist_h.flatten(),
+        hist_s.flatten(),
+        hist_v.flatten()
+    ])
+
+    color_features = color_features / np.sum(color_features)
+
+    # HOG FEATURES
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    features = hog(
+    hog_features = hog(
         gray,
-        orientations=9,
+        orientations=12,
         pixels_per_cell=(8, 8),
         cells_per_block=(2, 2),
         block_norm="L2-Hys"
     )
 
-    return features
+    combined_features = np.concatenate([
+        hog_features,
+        color_features
+    ])
+
+    return combined_features
 
 
 @app.route("/")
@@ -71,7 +93,7 @@ def predict():
         temp_file.write(image_bytes)
         temp_file.close()
 
-        features = extract_hog_features(temp_file.name)
+        features = extract_features(temp_file.name)
 
         if features is None:
             return jsonify({
