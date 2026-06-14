@@ -6,13 +6,15 @@ from skimage.feature import hog
 import tempfile
 import os
 import base64
+import traceback
 
 app = Flask(__name__)
 
 # Load model
 model = joblib.load("snapfix_rf_hog_hsv_v2.pkl")
 
-IMG_SIZE = 192
+# MUST MATCH TRAINING NOTEBOOK
+IMG_SIZE = 256
 
 
 def extract_features(image_path):
@@ -24,7 +26,7 @@ def extract_features(image_path):
 
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
 
-    # HSV COLOR FEATURES
+    # HSV FEATURES
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     hist_h = cv2.calcHist([hsv], [0], None, [64], [0, 180])
@@ -37,7 +39,7 @@ def extract_features(image_path):
         hist_v.flatten()
     ])
 
-    color_features = color_features / np.sum(color_features)
+    color_features = color_features / (np.sum(color_features) + 1e-8)
 
     # HOG FEATURES
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -62,20 +64,28 @@ def extract_features(image_path):
 def home():
     return jsonify({
         "status": "running",
-        "classes": list(model.classes_)
+        "classes": list(model.classes_),
+        "expected_features": int(model.n_features_in_)
     })
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
 
+    temp_file = None
+
     try:
 
         data = request.get_json()
 
-        if not data or "image" not in data:
+        if not data:
             return jsonify({
-                "error": "No image provided"
+                "error": "No JSON received"
+            }), 400
+
+        if "image" not in data:
+            return jsonify({
+                "error": "No image field found"
             }), 400
 
         image_data = data["image"]
@@ -97,10 +107,15 @@ def predict():
 
         if features is None:
             return jsonify({
-                "error": "Could not process image"
+                "error": "Could not read image"
             }), 400
 
+        print("Raw feature shape:", features.shape)
+        print("Model expects:", model.n_features_in_)
+
         features = features.reshape(1, -1)
+
+        print("Prediction feature shape:", features.shape)
 
         prediction = model.predict(features)[0]
 
@@ -117,15 +132,16 @@ def predict():
 
     except Exception as e:
 
+        traceback.print_exc()
+
         return jsonify({
             "error": str(e)
         }), 500
 
     finally:
 
-        if 'temp_file' in locals():
-            if os.path.exists(temp_file.name):
-                os.remove(temp_file.name)
+        if temp_file and os.path.exists(temp_file.name):
+            os.remove(temp_file.name)
 
 
 if __name__ == "__main__":
