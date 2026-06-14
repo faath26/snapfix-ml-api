@@ -10,7 +10,7 @@ import base64
 app = Flask(__name__)
 
 # Load model
-model = joblib.load("snapfix_rf_hog_model.pkl")
+model = joblib.load("snapfix_rf_hog_hsv_v2.pkl")
 
 IMG_SIZE = 192
 
