@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import joblib
 import cv2
 import numpy as np
-from skimage.feature import hog
+from skimage.feature import hog, local_binary_pattern
 import tempfile
 import os
 import base64
@@ -10,139 +10,173 @@ import traceback
 
 app = Flask(__name__)
 
-# Load model
-model = joblib.load("snapfix_rf_hog_hsv_v2.pkl")
+# ============================================================
+# 1. LOAD V2 MODEL & PREPROCESSORS
+# ============================================================
+model = joblib.load("final_rf_model_v2.pkl")
+scaler = joblib.load("scaler_v2.pkl")
+pca = joblib.load("pca_v2.pkl")
 
-# MUST MATCH TRAINING NOTEBOOK
-IMG_SIZE = 256
+# ============================================================
+# 2. CONSTANTS (MUST MATCH COLAB V2)
+# ============================================================
+IMG_SIZE = 128
 
+CATEGORY_MAP = {
+    0: "Cracked Roads",
+    1: "Potholes",
+    2: "Sanitation Issues",
+    3: "Blocked Roads"
+}
 
-def extract_features(image_path):
+# ============================================================
+# 3. FEATURE EXTRACTOR (HOG + CLAHE + LBP + HSV)
+# ============================================================
+def extract_features_v2(image_path):
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return None
+        
+        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img = cv2.imread(image_path)
+        # CLAHE (Contrast Enhancement)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray_enhanced = clahe.apply(gray)
 
-    if img is None:
+        # HOG (Edges/Shapes)
+        hog_features = hog(
+            gray_enhanced,
+            orientations=9,
+            pixels_per_cell=(8, 8),
+            cells_per_block=(2, 2),
+            block_norm='L2-Hys'
+        )
+
+        # LBP (Texture)
+        lbp = local_binary_pattern(gray_enhanced, P=8, R=1, method='uniform')
+        lbp_hist, _ = np.histogram(lbp.ravel(), bins=10, range=(0, 10))
+        lbp_hist = lbp_hist.astype(np.float32)
+        lbp_hist /= (lbp_hist.sum() + 1e-8)
+
+        # HSV Color (Hue and Saturation ONLY)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        hist_h = cv2.calcHist([hsv], [0], None, [32], [0, 180])
+        hist_s = cv2.calcHist([hsv], [1], None, [32], [0, 256])
+        
+        hist_h = hist_h.flatten()
+        hist_s = hist_s.flatten()
+        hist_h /= (hist_h.sum() + 1e-8)
+        hist_s /= (hist_s.sum() + 1e-8)
+
+        # Combine ALL 8,174 features
+        features = np.concatenate([hog_features, lbp_hist, hist_h, hist_s])
+        return features
+
+    except Exception as e:
+        print(f"Feature extraction error: {e}")
         return None
 
-    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+# ============================================================
+# 4. SEVERITY & PRIORITY RULES
+# ============================================================
+def determine_severity_priority(predicted_class, confidence):
+    # Class 3: Blocked Roads
+    if predicted_class == 3:
+        return "Critical", "Immediate"
+    
+    # Class 1: Potholes
+    elif predicted_class == 1:
+        if confidence >= 85:
+            return "High", "Urgent"
+        else:
+            return "Medium", "Scheduled"
+    
+    # Class 0: Cracked Roads
+    elif predicted_class == 0:
+        if confidence >= 85:
+            return "Medium", "Scheduled"
+        else:
+            return "Low", "Monitor"
+    
+    # Class 2: Sanitation Issues
+    elif predicted_class == 2:
+        if confidence >= 90:
+            return "Medium", "Scheduled"
+        else:
+            return "Low", "Routine"
+    
+    return "Unknown", "Unknown"
 
-    # HSV FEATURES
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-    hist_h = cv2.calcHist([hsv], [0], None, [64], [0, 180])
-    hist_s = cv2.calcHist([hsv], [1], None, [64], [0, 256])
-    hist_v = cv2.calcHist([hsv], [2], None, [64], [0, 256])
-
-    color_features = np.concatenate([
-        hist_h.flatten(),
-        hist_s.flatten(),
-        hist_v.flatten()
-    ])
-
-    color_features = color_features / (np.sum(color_features) + 1e-8)
-
-    # HOG FEATURES
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    hog_features = hog(
-        gray,
-        orientations=12,
-        pixels_per_cell=(8, 8),
-        cells_per_block=(2, 2),
-        block_norm="L2-Hys"
-    )
-
-    combined_features = np.concatenate([
-        hog_features,
-        color_features
-    ])
-
-    return combined_features
-
-
+# ============================================================
+# 5. ROUTES
+# ============================================================
 @app.route("/")
 def home():
     return jsonify({
         "status": "running",
-        "classes": list(model.classes_),
+        "model_version": "V2 (HOG+LBP+HSV)",
         "expected_features": int(model.n_features_in_)
     })
 
-
 @app.route("/predict", methods=["POST"])
 def predict():
-
     temp_file = None
-
     try:
-
         data = request.get_json()
+        if not data or "image" not in data:
+            return jsonify({"error": "No image provided"}), 400
 
-        if not data:
-            return jsonify({
-                "error": "No JSON received"
-            }), 400
-
-        if "image" not in data:
-            return jsonify({
-                "error": "No image field found"
-            }), 400
-
+        # Decode base64 image
         image_data = data["image"]
-
         if "," in image_data:
             image_data = image_data.split(",")[1]
-
+        
         image_bytes = base64.b64decode(image_data)
-
-        temp_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".jpg"
-        )
-
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
         temp_file.write(image_bytes)
         temp_file.close()
 
-        features = extract_features(temp_file.name)
+        # 1. Extract raw features (8,174)
+        raw_features = extract_features_v2(temp_file.name)
+        if raw_features is None:
+            return jsonify({"error": "Invalid image"}), 400
 
-        if features is None:
-            return jsonify({
-                "error": "Could not read image"
-            }), 400
+        # 2. Reshape for sklearn
+        raw_features = raw_features.reshape(1, -1)
 
-        print("Raw feature shape:", features.shape)
-        print("Model expects:", model.n_features_in_)
+        # 3. STANDARDIZE
+        scaled_features = scaler.transform(raw_features)
 
-        features = features.reshape(1, -1)
+        # 4. REDUCE DIMENSIONS (PCA)
+        pca_features = pca.transform(scaled_features)
 
-        print("Prediction feature shape:", features.shape)
-
-        prediction = model.predict(features)[0]
-
-        probabilities = model.predict_proba(features)[0]
-
+        # 5. PREDICT
+        predicted_class = int(model.predict(pca_features)[0])
+        probabilities = model.predict_proba(pca_features)[0]
         confidence = float(np.max(probabilities) * 100)
 
+        # 6. Get Severity & Priority
+        severity, priority = determine_severity_priority(predicted_class, confidence)
+        category = CATEGORY_MAP[predicted_class]
+
         return jsonify({
-            "prediction": str(prediction),
+            "category": category,
+            "class_id": predicted_class,
             "confidence": round(confidence, 2),
-            "all_classes": list(model.classes_),
+            "severity": severity,
+            "priority": priority,
             "probabilities": probabilities.tolist()
         })
 
     except Exception as e:
-
         traceback.print_exc()
-
-        return jsonify({
-            "error": str(e)
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
     finally:
-
         if temp_file and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
