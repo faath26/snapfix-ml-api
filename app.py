@@ -81,32 +81,45 @@ def extract_features_v2(image_path):
 # ============================================================
 # 4. SEVERITY & PRIORITY RULES
 # ============================================================
+
 def determine_severity_priority(predicted_class, confidence):
-    # Class 3: Blocked Roads
+    # ============================================================
+    # GLOBAL SAFETY NET: 
+    # IF Confidence is EXTREMELY LOW (< 30%), the AI is guessing.
+    # Send to Manual Review regardless of category.
+    # ============================================================
+    if confidence < 30:
+        return "Pending", "Manual Review"
+
+    # ============================================================
+    # RULES FOR CONFIDENCE >= 30%
+    # ============================================================
+
+    # --- 1. BLOCKED ROADS (Class 3) ---
     if predicted_class == 3:
         return "Critical", "Immediate"
-    
-    # Class 1: Potholes
+
+    # --- 2. POTHOLES (Class 1) ---
     elif predicted_class == 1:
         if confidence >= 85:
             return "High", "Urgent"
         else:
             return "Medium", "Scheduled"
-    
-    # Class 0: Cracked Roads
+
+    # --- 3. CRACKED ROADS (Class 0) ---
     elif predicted_class == 0:
         if confidence >= 85:
             return "Medium", "Scheduled"
         else:
             return "Low", "Monitor"
-    
-    # Class 2: Sanitation Issues
+
+    # --- 4. SANITATION ISSUES (Class 2) ---
     elif predicted_class == 2:
         if confidence >= 90:
             return "Medium", "Scheduled"
         else:
             return "Low", "Routine"
-    
+
     return "Unknown", "Unknown"
 
 # ============================================================
