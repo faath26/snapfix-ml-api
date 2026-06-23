@@ -8,7 +8,9 @@ import os
 import base64
 import traceback
 
+from flask_cors import CORS
 app = Flask(__name__)
+CORS(app)  # This allows your React Native app to talk to the backend
 
 # ============================================================
 # 1. LOAD V2 MODEL & PREPROCESSORS
