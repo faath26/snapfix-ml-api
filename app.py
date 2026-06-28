@@ -7,10 +7,10 @@ import tempfile
 import os
 import base64
 import traceback
-
 from flask_cors import CORS
+
 app = Flask(__name__)
-CORS(app)  # This allows your React Native app to talk to the backend
+CORS(app)
 
 # ============================================================
 # 1. LOAD V2 MODEL & PREPROCESSORS
@@ -20,7 +20,7 @@ scaler = joblib.load("scaler_v2.pkl")
 pca = joblib.load("pca_v2.pkl")
 
 # ============================================================
-# 2. CONSTANTS (MUST MATCH COLAB V2)
+# 2. CONSTANTS
 # ============================================================
 IMG_SIZE = 128
 
@@ -83,19 +83,10 @@ def extract_features_v2(image_path):
 # ============================================================
 # 4. SEVERITY & PRIORITY RULES
 # ============================================================
-
 def determine_severity_priority(predicted_class, confidence):
-    # ============================================================
-    # GLOBAL SAFETY NET: 
-    # IF Confidence is EXTREMELY LOW (< 30%), the AI is guessing.
-    # Send to Manual Review regardless of category.
-    # ============================================================
+    # GLOBAL SAFETY NET: < 30% confidence -> Manual Review
     if confidence < 30:
         return "Pending", "Manual Review"
-
-    # ============================================================
-    # RULES FOR CONFIDENCE >= 30%
-    # ============================================================
 
     # --- 1. BLOCKED ROADS (Class 3) ---
     if predicted_class == 3:
@@ -120,7 +111,7 @@ def determine_severity_priority(predicted_class, confidence):
         if confidence >= 90:
             return "Medium", "Scheduled"
         else:
-            return "Low", "Routine"
+            return "Low", "Scheduled"  # <-- FIXED: Now matches Table 3.2
 
     return "Unknown", "Unknown"
 
