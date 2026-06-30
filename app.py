@@ -90,7 +90,7 @@ def determine_severity_priority(predicted_class, confidence):
 
     # --- 1. BLOCKED ROADS (Class 3) ---
     if predicted_class == 3:
-        return "Critical", "Immediate"
+        return "Critical", "Urgent"
 
     # --- 2. POTHOLES (Class 1) ---
     elif predicted_class == 1:
